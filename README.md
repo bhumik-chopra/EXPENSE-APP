@@ -1,50 +1,57 @@
-# Welcome to your Expo app 👋
+# Expense Tracker Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Faithful React Native mobile implementation of the `Expense Tracker` web app using Expo, React Navigation, and Clerk.
 
-## Get started
+## Setup
 
 1. Install dependencies
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Create `.env`
 
-## Learn more
+```bash
+EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:5000
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_c2luY2VyZS1zaGVlcC00NC5jbGVyay5hY2NvdW50cy5kZXYk
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+3. Enable Clerk Native API in the Clerk dashboard and allow the redirect scheme:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```text
+expensetracker://auth
+```
 
-## Join the community
+4. Start the app
 
-Join our community of developers creating universal apps.
+```bash
+npx expo start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Do not place a Clerk secret key in this Expo app. Secret keys belong only on a secure backend/server.
+
+The app auto-detects the backend host from the Expo development host when possible and falls back to `EXPO_PUBLIC_API_BASE_URL`.
+
+## Included Features
+
+- Clerk email/password sign in and sign up with verification code
+- Persistent light/dark theme with premium visual treatment
+- Dashboard with `UploadCard`, `PieChartCard`, `ExpenseTable`, `LineChartCard`, and `BudgetProgressCard`
+- Receipt import from files, image library, and camera
+- Backend integration for expenses, analytics, budget, reports, and predictions
+- `BHAVISHYVANI` forecast screen
+- CSV and PDF report export via native share flows
+
+## Web To Mobile Mapping
+
+- Dashboard -> `src/screens/main/DashboardScreen.tsx`
+- Upload Receipt -> `src/screens/main/UploadReceiptScreen.tsx`
+- Charts -> `src/screens/main/ChartsScreen.tsx`
+- BHAVISHYVANI -> `src/screens/main/BhavishyvaniScreen.tsx`
+- Reports -> `src/screens/main/ReportsScreen.tsx`
+- Settings -> `src/screens/main/SettingsScreen.tsx`
+- Auth flow -> `src/screens/auth/*`
+- Shared UI/cards -> `src/components/*`
+- Backend/API layer -> `src/api/*`
+- Theme system -> `src/theme/*`

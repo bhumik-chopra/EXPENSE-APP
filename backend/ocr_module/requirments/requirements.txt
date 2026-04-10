@@ -1,0 +1,27 @@
+# Python 3.14 compatible default dependencies for the OCR module.
+# The original pins targeted older Python releases and blocked installation.
+
+# Core ML and NLP
+torch>=2.11,<2.12
+transformers>=5.5,<5.6
+tokenizers>=0.22,<0.23
+accelerate>=1.13,<1.14
+huggingface_hub>=1.9,<1.10
+scikit-learn>=1.8,<1.9
+
+# OCR
+easyocr>=1.7.2,<1.8
+
+# Image processing
+opencv-python>=4.10,<4.11
+numpy>=2.4,<2.5
+
+# Data
+pandas>=3.0,<3.1
+
+# Optional PaddleOCR stack
+# Disabled for Python 3.14 because `paddlepaddle` does not currently publish
+# installable wheels for this interpreter on Windows, which breaks `pip install -r`.
+# If you move this project to a supported Python version, install these separately:
+# paddlepaddle
+# paddleocr

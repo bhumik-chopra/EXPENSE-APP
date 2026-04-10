@@ -25,13 +25,25 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
 
 # macOS
 .DS_Store
 *.pem
 
 # local env files
+.env
 .env*.local
+backend/.env
+
+# local IDE files
+.idea/
+backend/.venv311/
+backend/__pycache__/
+backend/ocr_module/__pycache__/
+backend/*.log
+backend/*.err.log
+backend/*.out.log
 
 # typescript
 *.tsbuildinfo
