@@ -20,8 +20,8 @@ const isPasswordValid = (value: string) =>
 export function SignUpScreen({ navigation }: Props) {
   const { signUp, isLoaded } = useSignUp();
   const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
-  const [dateOfBirth, setDateOfBirth] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,6 +29,11 @@ export function SignUpScreen({ navigation }: Props) {
   const handleSubmit = async () => {
     if (!isLoaded) {
       setError('Authentication is still loading. Please try again in a moment.');
+      return;
+    }
+
+    if (!fullName.trim() || !username.trim() || !email.trim() || !password) {
+      setError('Enter your full name, username, email, and password to create an account.');
       return;
     }
 
@@ -42,15 +47,17 @@ export function SignUpScreen({ navigation }: Props) {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
+      const normalizedUsername = username.trim().toLowerCase();
+      const [firstName, ...restNames] = fullName.trim().split(/\s+/);
 
       await signUp.create({
         emailAddress: normalizedEmail,
+        username: normalizedUsername,
         password,
-        firstName: fullName.split(' ')[0] ?? fullName,
-        lastName: fullName.split(' ').slice(1).join(' ') || undefined,
+        firstName: firstName ?? fullName.trim(),
+        lastName: restNames.join(' ') || undefined,
         unsafeMetadata: {
-          fullName,
-          dateOfBirth,
+          fullName: fullName.trim(),
         },
       });
 
@@ -66,12 +73,18 @@ export function SignUpScreen({ navigation }: Props) {
   return (
     <AuthScaffold
       title="Create your account"
-      subtitle="Set up Expense Tracker with your full name, email, date of birth, and password.">
+      subtitle="Create an account with your full name, username, email, and password. You will verify your email before the session starts.">
       <View style={styles.form}>
         {error ? <StatusBanner message={error} /> : null}
         <FormField label="Full Name" value={fullName} onChangeText={setFullName} />
+        <FormField
+          label="Username"
+          value={username}
+          onChangeText={setUsername}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
         <FormField label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-        <FormField label="Date of Birth" value={dateOfBirth} onChangeText={setDateOfBirth} placeholder="YYYY-MM-DD" />
         <FormField
           label="Password"
           value={password}

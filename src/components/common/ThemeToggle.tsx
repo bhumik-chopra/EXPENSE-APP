@@ -12,7 +12,7 @@ export function ThemeToggle() {
       style={[
         styles.button,
         {
-          backgroundColor: theme.mode === 'dark' ? 'rgba(168, 85, 247, 0.14)' : 'rgba(255,255,255,0.84)',
+          backgroundColor: theme.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.92)',
           borderColor: theme.colors.border,
         },
       ]}>

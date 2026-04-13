@@ -18,9 +18,7 @@ function MissingConfiguration() {
   return (
     <View style={styles.centered}>
       <Text style={styles.title}>Expense Tracker</Text>
-      <Text style={styles.message}>
-        Add `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` to your environment before running the app.
-      </Text>
+   
     </View>
   );
 }
@@ -67,7 +65,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0b0b0f',
+    backgroundColor: '#0f172a',
     paddingHorizontal: 24,
   },
   title: {

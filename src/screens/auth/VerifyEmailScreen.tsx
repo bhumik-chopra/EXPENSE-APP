@@ -40,7 +40,7 @@ export function VerifyEmailScreen({ navigation, route }: Props) {
 
       if (result.status === 'missing_requirements' || result.status === 'abandoned') {
         setInfo('Your email looks verified, but Clerk did not finish creating a session here. Please sign in with your email and password.');
-        navigation.navigate('Sign In', { email: route.params.email });
+        navigation.navigate('Sign In', { identifier: route.params.email });
         return;
       }
 
@@ -51,7 +51,7 @@ export function VerifyEmailScreen({ navigation, route }: Props) {
 
       if (normalizedMessage.includes('already verified') || normalizedMessage.includes('has been verified')) {
         setInfo('This email is already verified. Please sign in with your email and password.');
-        navigation.navigate('Sign In', { email: route.params.email });
+        navigation.navigate('Sign In', { identifier: route.params.email });
         return;
       }
 
@@ -101,7 +101,7 @@ export function VerifyEmailScreen({ navigation, route }: Props) {
         <SecondaryButton label="Resend Code" onPress={handleResend} />
         <SecondaryButton
           label="Go To Sign In"
-          onPress={() => navigation.navigate('Sign In', { email: route.params.email })}
+          onPress={() => navigation.navigate('Sign In', { identifier: route.params.email })}
         />
       </View>
     </AuthScaffold>

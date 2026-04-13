@@ -266,6 +266,12 @@ def generate_predictions(
         remaining_spend = max(predicted_month_end_spend - current_spend, 0.0)
         predicted_next_7_days_spend = remaining_spend if remaining_days <= 7 else (remaining_spend / remaining_days) * 7
 
+        # If the regression collapses to "no additional spend" despite current activity,
+        # fall back to recent daily pace for a more useful short-term estimate.
+        if predicted_next_7_days_spend <= 0 and current_spend > 0 and current_aggregate.elapsed_days > 0 and remaining_days > 0:
+            daily_pace = current_spend / current_aggregate.elapsed_days
+            predicted_next_7_days_spend = daily_pace * min(7, remaining_days)
+
     predicted_month_end_spend = _round_money(predicted_month_end_spend)
     predicted_next_7_days_spend = _round_money(max(predicted_next_7_days_spend, 0.0))
     derived_risk_label = _risk_label(predicted_month_end_spend, budget)

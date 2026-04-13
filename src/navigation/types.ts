@@ -1,6 +1,6 @@
 export type AuthStackParamList = {
   'Sign In': {
-    email?: string;
+    identifier?: string;
   } | undefined;
   'Sign Up': undefined;
   'Verify Email': {

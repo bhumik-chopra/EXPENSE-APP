@@ -33,7 +33,7 @@ function AppTabs() {
       screenOptions={({ route }) => ({
         headerTitle: 'Expense Tracker',
         headerStyle: {
-          backgroundColor: theme.mode === 'dark' ? '#0b0b0f' : '#eff6ff',
+          backgroundColor: theme.mode === 'dark' ? 'rgba(15, 13, 20, 0.98)' : '#eff6ff',
         },
         headerTitleStyle: {
           color: theme.colors.text,
@@ -51,7 +51,7 @@ function AppTabs() {
           height: 78,
           paddingTop: 10,
           paddingBottom: 10,
-          backgroundColor: theme.mode === 'dark' ? '#0f0d14' : 'rgba(255,255,255,0.96)',
+          backgroundColor: theme.mode === 'dark' ? 'rgba(15, 13, 20, 0.98)' : 'rgba(255,255,255,0.96)',
           borderTopColor: theme.colors.border,
         },
         tabBarLabelStyle: {

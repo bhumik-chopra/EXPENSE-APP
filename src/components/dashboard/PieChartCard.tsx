@@ -4,6 +4,7 @@ import { ExpensePieChart } from '@/src/components/charts/ExpensePieChart';
 import { GlowCard } from '@/src/components/common/GlowCard';
 import { ThemedText } from '@/src/components/common/ThemedText';
 import { AnalyticsSummary } from '@/src/types';
+import { currency } from '@/src/utils/format';
 
 export function PieChartCard({ analytics }: { analytics: AnalyticsSummary | null }) {
   return (
@@ -20,7 +21,7 @@ export function PieChartCard({ analytics }: { analytics: AnalyticsSummary | null
           <View key={entry.label} style={styles.legendRow}>
             <View style={[styles.dot, { backgroundColor: entry.color }]} />
             <ThemedText style={styles.label}>{entry.label}</ThemedText>
-            <ThemedText variant="caption">${entry.value.toFixed(0)}</ThemedText>
+            <ThemedText variant="caption">{currency(entry.value)}</ThemedText>
           </View>
         ))}
     </GlowCard>

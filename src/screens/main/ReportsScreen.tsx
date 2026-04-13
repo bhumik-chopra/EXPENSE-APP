@@ -12,7 +12,7 @@ import { SectionHeader } from '@/src/components/common/SectionHeader';
 import { StatusBanner } from '@/src/components/common/StatusBanner';
 import { ThemedText } from '@/src/components/common/ThemedText';
 import { useExpenseData } from '@/src/providers/DataProvider';
-import { currency, monthLabel, toMonthInputValue } from '@/src/utils/format';
+import { currency, currencyLabel, formatDate, monthLabel, toMonthInputValue } from '@/src/utils/format';
 
 export function ReportsScreen() {
   const { expenses, loading, error, refreshAll } = useExpenseData();
@@ -28,7 +28,7 @@ export function ReportsScreen() {
 
   const exportCsv = async () => {
     const csv = ['Date,Category,Amount,Currency']
-      .concat(filteredExpenses.map((expense) => `${expense.date},${expense.category},${expense.amount},${expense.currency}`))
+      .concat(filteredExpenses.map((expense) => `${expense.date},${expense.category},${expense.amount},${currencyLabel(expense.currency)}`))
       .join('\n');
     const uri = `${FileSystem.cacheDirectory}expense-report-${selectedMonth}.csv`;
     await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
@@ -45,7 +45,7 @@ export function ReportsScreen() {
       <p>Total amount: ${currency(totalAmount)}</p>
       <table border="1" cellspacing="0" cellpadding="8">
       <tr><th>Date</th><th>Category</th><th>Amount</th></tr>
-      ${filteredExpenses.map((expense) => `<tr><td>${expense.date}</td><td>${expense.category}</td><td>${expense.currency} ${expense.amount.toFixed(2)}</td></tr>`).join('')}
+      ${filteredExpenses.map((expense) => `<tr><td>${expense.date}</td><td>${expense.category}</td><td>${currency(expense.amount)} (${currencyLabel(expense.currency)})</td></tr>`).join('')}
       </table>
       </body></html>
     `;
@@ -73,13 +73,24 @@ export function ReportsScreen() {
         <ThemedText variant="subtitle">Monthly expense list</ThemedText>
         {filteredExpenses.map((expense) => (
           <View key={expense.id} style={styles.expenseRow}>
-            <View style={{ flex: 1 }}>
-              <ThemedText>{expense.category}</ThemedText>
-              <ThemedText variant="caption">{expense.date}</ThemedText>
+            <View style={styles.expenseGrid}>
+              <View style={styles.field}>
+                <ThemedText variant="caption">Category</ThemedText>
+                <ThemedText>{expense.category}</ThemedText>
+              </View>
+              <View style={styles.field}>
+                <ThemedText variant="caption">Currency</ThemedText>
+                <ThemedText>{currencyLabel(expense.currency)}</ThemedText>
+              </View>
+              <View style={styles.field}>
+                <ThemedText variant="caption">Amount</ThemedText>
+                <ThemedText>{currency(expense.amount)}</ThemedText>
+              </View>
+              <View style={styles.field}>
+                <ThemedText variant="caption">Date</ThemedText>
+                <ThemedText>{formatDate(expense.date)}</ThemedText>
+              </View>
             </View>
-            <ThemedText variant="subtitle">
-              {expense.currency} {expense.amount.toFixed(2)}
-            </ThemedText>
           </View>
         ))}
       </GlowCard>
@@ -92,9 +103,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   expenseRow: {
+    paddingVertical: 10,
+  },
+  expenseGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 12,
+  },
+  field: {
+    minWidth: '47%',
+    gap: 2,
   },
 });

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -116,8 +117,6 @@ CORS(
 USD_TO_INR_RATE = 80.0
 MONGODB_URI = os.environ.get("MONGODB_URI", "").strip()
 MONGODB_DB_NAME = os.environ.get("MONGODB_DB_NAME", "EXPENSE").strip() or "EXPENSE"
-
-
 def normalize_currency(value) -> str:
     currency = str(value or "INR").strip().upper()
     return currency if currency in {"INR", "USD"} else "INR"
@@ -347,15 +346,36 @@ class ReceiptProcessor:
     def __init__(self) -> None:
         self.service_error = None
         self.ocr_service = None
-        try:
-            self.ocr_service = OCRService(models_dir=str(OCR_MODELS_DIR), use_gpu=False)
-        except Exception as exc:
-            self.service_error = str(exc)
-            print(f"OCR service failed to initialize: {exc}")
+        self._ocr_init_lock = threading.Lock()
+        self._ocr_init_attempted = False
 
     @property
     def is_ready(self) -> bool:
         return self.ocr_service is not None
+
+    @property
+    def is_initialized(self) -> bool:
+        return self._ocr_init_attempted
+
+    def _ensure_ocr_service(self) -> bool:
+        if self.ocr_service is not None:
+            return True
+
+        with self._ocr_init_lock:
+            if self.ocr_service is not None:
+                return True
+
+            self._ocr_init_attempted = True
+            self.service_error = None
+
+            try:
+                self.ocr_service = OCRService(models_dir=str(OCR_MODELS_DIR), use_gpu=False)
+                return True
+            except Exception as exc:
+                self.ocr_service = None
+                self.service_error = str(exc)
+                print(f"OCR service failed to initialize: {exc}")
+                return False
 
     def process_image_upload(self, file_storage):
         suffix = Path(file_storage.filename or "receipt.jpg").suffix or ".jpg"
@@ -388,7 +408,7 @@ class ReceiptProcessor:
         return parsed
 
     def _build_receipt_payload(self, image_path: str, source: str):
-        if not self.is_ready:
+        if not self._ensure_ocr_service():
             return self._manual_entry_payload(
                 message=self.service_error or "OCR service is not available.",
                 source=source,
@@ -401,11 +421,97 @@ class ReceiptProcessor:
             source=source,
             default_category=result.get("category"),
             default_amount=result.get("amount"),
+            default_date=result.get("date"),
             ocr_backend=result.get("ocr_backend"),
             all_amounts=result.get("all_amounts", []),
         )
         parsed["confidence"] = 0.82 if raw_text else 0.35
         return parsed
+
+    @staticmethod
+    def _parse_amount_value(raw: str) -> float:
+        try:
+            return round(float(str(raw).replace(",", "")), 2)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _normalize_spaced_amounts(text: str) -> str:
+        normalized = str(text or "")
+        normalized = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", normalized)
+        return normalized
+
+    @staticmethod
+    def _is_valid_date_string(value: str | None) -> bool:
+        if not value:
+            return False
+        try:
+            datetime.strptime(str(value), "%Y-%m-%d")
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    def _extract_line_amounts(self, line: str) -> list[float]:
+        if not line:
+            return []
+
+        lower = line.lower()
+        if any(
+            token in lower
+            for token in (
+                "gst no",
+                "gstin",
+                "phone",
+                "mobile",
+                "invoice no",
+                "bill no",
+                "token no",
+                "order id",
+                "state code",
+                "merchant id",
+                "approval code",
+                "transaction id",
+                "ref #",
+                "ref#",
+                "act #",
+                "point opening",
+                "point collected",
+                "point redeem",
+                "point balance",
+                "card no",
+                "incard no",
+                "receipt status",
+            )
+        ):
+            return []
+
+        values = []
+        for match in re.finditer(r"\d+(?:,\d{3})*(?:\.\d{1,2})?", line):
+            token = match.group(0)
+            start = match.start()
+            end = match.end()
+            context = line[max(0, start - 6) : min(len(line), end + 6)].lower()
+            before = line[start - 1] if start > 0 else ""
+            after = line[end] if end < len(line) else ""
+
+            if "/" in context or "-" in context or ":" in context:
+                continue
+            if before.isdigit() or after.isdigit():
+                continue
+            if re.fullmatch(r"\d{4}", token):
+                continue
+            if len(token) >= 6 and "." not in token:
+                continue
+            if "total item qty" in lower or "item qty" in lower:
+                continue
+            if before.isalpha() or after.isalpha():
+                continue
+
+            value = self._parse_amount_value(token)
+            if value > 0:
+                values.append(value)
+
+        return values
 
     def _build_text_payload(
         self,
@@ -413,10 +519,11 @@ class ReceiptProcessor:
         source: str,
         default_category: str | None = None,
         default_amount: float | None = None,
+        default_date: str | None = None,
         ocr_backend: str | None = None,
         all_amounts: list[float] | None = None,
     ):
-        clean_text = (extracted_text or "").strip()
+        clean_text = self._normalize_spaced_amounts(extracted_text).strip()
         if not clean_text:
             return self._manual_entry_payload(
                 message="No readable text was found in the uploaded receipt.",
@@ -466,6 +573,8 @@ class ReceiptProcessor:
 
                 if "net to pay" in lower:
                     score += 95
+                elif "pls pay" in lower or "please pay" in lower:
+                    score += 90
                 elif "grand total" in lower:
                     score += 80
                 elif "net total" in lower or "invoice total" in lower or "amount due" in lower:
@@ -473,7 +582,7 @@ class ReceiptProcessor:
                 elif re.search(r"\btotal\b", lower):
                     score += 50
 
-                if any(token in lower for token in ("cgst", "sgst", "igst", "vat", "tax", "round off")):
+                if any(token in lower for token in ("cgst", "sgst", "igst", "vat", "tax", "round off", "item qty")):
                     score -= 40
 
                 number_count = len(re.findall(r"\d+(?:[.,]\d+)?", line))
@@ -502,8 +611,11 @@ class ReceiptProcessor:
         if labeled_total > 0 and (
             not default_amount
             or default_amount <= 0
-            or labeled_total > float(default_amount)
             or score_amount_candidate(labeled_total) > score_amount_candidate(float(default_amount))
+            or (
+                score_amount_candidate(labeled_total) == score_amount_candidate(float(default_amount))
+                and labeled_total <= float(default_amount) * 1.25
+            )
         ):
             default_amount = labeled_total
 
@@ -523,8 +635,9 @@ class ReceiptProcessor:
             round(unique_amounts[0], 2) if unique_amounts else 0
         )
         category = self._normalize_category(default_category or self._predict_category(clean_text))
+        category = self._normalize_category(self._fallback_category_from_text(clean_text, category))
         vendor = self._extract_vendor(clean_text)
-        date_value = self._extract_date(clean_text)
+        date_value = default_date if self._is_valid_date_string(default_date) else self._extract_date(clean_text)
         currency = self._detect_currency(clean_text)
         items = self._extract_items(clean_text)
 
@@ -558,35 +671,57 @@ class ReceiptProcessor:
 
     def _extract_labeled_total(self, text: str) -> float:
         collapsed = re.sub(r"\s+", " ", text).strip()
-        if not collapsed:
+        if collapsed:
+            explicit_match = re.search(
+                r"(?:pls\.?\s*pay|please\s*pay|net\s*to\s*pay|grand\s*total|amount\s*due|net\s*total|total\s*payable)[^0-9]{0,20}(\d+(?:,\d{3})*(?:\.\d{1,2})?)",
+                collapsed,
+                flags=re.IGNORECASE,
+            )
+            if explicit_match:
+                explicit_value = self._parse_amount_value(explicit_match.group(1))
+                if explicit_value > 0:
+                    return explicit_value
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
             return 0.0
 
-        amount_pattern = r"(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)"
-
-        def parse_amount(raw: str) -> float:
-            try:
-                return round(float(raw.replace(",", "")), 2)
-            except ValueError:
-                return 0.0
-
-        def find_after_labels(labels: tuple[str, ...], window: int = 48) -> list[float]:
+        def find_labeled_values(labels: tuple[str, ...]) -> list[float]:
             values = []
-            for label in labels:
-                pattern = re.compile(rf"{label}[^0-9]{{0,{window}}}{amount_pattern}", flags=re.IGNORECASE)
-                for match in pattern.finditer(collapsed):
-                    value = parse_amount(match.group(1))
-                    if value > 0:
-                        values.append(value)
+            for line in lines:
+                lower = line.lower()
+                if any(
+                    token in lower
+                    for token in (
+                        "total item qty",
+                        "qty.",
+                        "gst",
+                        "phone",
+                        "state code",
+                        "plot no",
+                    )
+                ):
+                    continue
+                if any(re.search(label, line, flags=re.IGNORECASE) for label in labels):
+                    values.extend(self._extract_line_amounts(line))
             return values
 
-        grand_total_values = find_after_labels(
-            ("net\\s*to\\s*pay", "grand\\s*total", "amount\\s*due", "net\\s*total", "total\\s*payable")
+        grand_total_values = find_labeled_values(
+            (
+                r"net\s*to\s*pay",
+                r"pls\.?\s*pay",
+                r"please\s*pay",
+                r"grand\s*total",
+                r"amount\s*due",
+                r"net\s*total",
+                r"total\s*payable",
+            )
         )
         if grand_total_values:
             return max(grand_total_values)
 
-        total_values = find_after_labels(("invoice\\s*total", "(?<!grand\\s)total"))
-        gst_values = find_after_labels(("gst", "cgst", "sgst", "igst", "vat", "tax"), window=24)
+        total_values = find_labeled_values((r"invoice\s*total", r"(?<!grand\s)\btotal\b"))
+        gst_values = find_labeled_values((r"\bcgst\b", r"\bsgst\b", r"\bigst\b", r"\bvat\b", r"\btax\b"))
 
         if total_values and gst_values:
             highest_total = max(total_values)
@@ -611,21 +746,34 @@ class ReceiptProcessor:
         subtotal_candidates = []
         grand_total_candidates = []
 
-        amount_pattern = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?")
         for line in lines:
             lower = line.lower()
-            values = []
-            for token in amount_pattern.findall(line):
-                try:
-                    values.append(round(float(token.replace(",", "")), 2))
-                except ValueError:
-                    continue
+            if any(
+                token in lower
+                for token in (
+                    "gst no",
+                    "gstin",
+                    "phone",
+                    "mobile",
+                    "state code",
+                    "plot no",
+                    "date & time",
+                    "invoice no",
+                    "bill no",
+                )
+            ):
+                continue
+
+            values = self._extract_line_amounts(line)
 
             if not values:
                 continue
 
-            if "grand total" in lower:
+            if any(token in lower for token in ("grand total", "amount due", "net total", "invoice total", "payable", "pls pay", "please pay")):
                 grand_total_candidates.append(max(values))
+                continue
+
+            if "total item qty" in lower or "item qty" in lower:
                 continue
 
             if re.search(r"\btotal\b", lower) and "subtotal" not in lower and "grand total" not in lower:
@@ -638,10 +786,6 @@ class ReceiptProcessor:
 
             if "round off" in lower:
                 round_off += max(values)
-                continue
-
-            if any(token in lower for token in ("amount due", "net total", "invoice total", "payable")):
-                grand_total_candidates.append(max(values))
                 continue
 
             if len(values) >= 2 and re.search(r"[a-zA-Z]", line):
@@ -751,6 +895,32 @@ class ReceiptProcessor:
             "payment receipt",
         }
 
+        slogan_header_match = re.match(r"\s*([A-Z][A-Za-z&.'*-]{2,40})\s+Save money", text, flags=re.IGNORECASE)
+        if slogan_header_match:
+            return slogan_header_match.group(1).strip()[:80]
+
+        if "store" in text.lower():
+            leading_tokens = re.findall(r"\b[A-Z][A-Z&.'*-]{2,}\b", text[:120])
+            for token in leading_tokens:
+                if token.lower() not in {"invoice", "receipt", "tax", "plot", "state", "phone", "name", "date", "cash"}:
+                    return f"{token} STORE"[:80]
+
+        if len(lines) <= 2:
+            header_match = re.search(
+                r"\b(?:receipt|invoice|tax invoice)\b\s+([A-Z][A-Za-z&.' -]{2,60}?(?:clinic|store|mart|medical|pharmacy|hospital|restaurant|cafe|veterinary clinic))\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if header_match:
+                return re.sub(r"\s+", " ", header_match.group(1)).strip()[:80]
+
+        uppercase_header_match = re.search(
+            r"\b([A-Z][A-Z&.' -]{3,60}?(?:PHARMACY|CLINIC|STORE|MART|MEDICAL|HOSPITAL|CAFE|RESTAURANT))\b",
+            text,
+        )
+        if uppercase_header_match:
+            return re.sub(r"\s+", " ", uppercase_header_match.group(1)).strip()[:80]
+
         def looks_like_item_row(value: str) -> bool:
             compact = re.sub(r"\s+", " ", value).strip()
             if not compact:
@@ -783,6 +953,8 @@ class ReceiptProcessor:
 
     def _extract_date(self, text: str) -> str:
         current_year = datetime.now().year
+        text = re.sub(r"\b(20\d)[sS]\b", lambda m: f"{m.group(1)}{str(current_year)[-1]}", text)
+        text = re.sub(r"\b(20\d)[oO]\b", r"\g<1>0", text)
 
         def normalize_year(raw_year: str) -> int | None:
             try:
@@ -834,10 +1006,21 @@ class ReceiptProcessor:
             (
                 r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})(?=\d{1,2}:\d{2}(?:\s*[APMapm]{2})?)",
                 lambda m: (
-                    lambda parts: build_date(parts[0], parts[1], parts[2])
+                    lambda parts: build_date(
+                        parts[1] if parts[1].isdigit() and int(parts[1]) > 12 and parts[0].isdigit() and int(parts[0]) <= 12 else parts[0],
+                        parts[0] if parts[1].isdigit() and int(parts[1]) > 12 and parts[0].isdigit() and int(parts[0]) <= 12 else parts[1],
+                        parts[2],
+                    )
                 )(re.split(r"[/-]", m.group(1))),
             ),
-            (r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", lambda m: build_date(m.group(1), m.group(2), m.group(3))),
+            (
+                r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b",
+                lambda m: build_date(
+                    m.group(2) if m.group(2).isdigit() and int(m.group(2)) > 12 and m.group(1).isdigit() and int(m.group(1)) <= 12 else m.group(1),
+                    m.group(1) if m.group(2).isdigit() and int(m.group(2)) > 12 and m.group(1).isdigit() and int(m.group(1)) <= 12 else m.group(2),
+                    m.group(3),
+                ),
+            ),
             (r"\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})\b", lambda m: build_date(m.group(1), m.group(2), m.group(3))),
             (r"\b([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{2,4})\b", lambda m: build_date(m.group(2), m.group(1), m.group(3))),
             (r"\b(\d{1,2})([A-Za-z]{3,9})(\d{2,4})\b", lambda m: build_date(m.group(1), m.group(2), m.group(3))),
@@ -1126,9 +1309,40 @@ class ReceiptProcessor:
         try:
             category = self.ocr_service.predict_category(text)
             category = self.ocr_service.refine_category(text, category)
+            normalized = str(category or "").strip().lower()
+            text_lower = str(text or "").lower()
+
+            if normalized in {"", "other", "others"}:
+                if any(token in text_lower for token in ("pharmacy", "medical", "clinic", "hospital", "doctor", "medicine")):
+                    return "Healthcare"
+
+                if (
+                    any(token in text_lower for token in ("store", "mart", "supermarket", "market"))
+                    and any(token in text_lower for token in ("qty", "mrp", "rate", "amt", "pls pay", "bill no"))
+                ):
+                    return "Shopping"
+
             return category
         except Exception:
             return "Other"
+
+    def _fallback_category_from_text(self, text: str, current_category: str | None = None) -> str:
+        normalized = str(current_category or "").strip().lower()
+        if normalized not in {"", "other", "others"}:
+            return current_category or "Other"
+
+        text_lower = str(text or "").lower()
+
+        if any(token in text_lower for token in ("pharmacy", "medical", "clinic", "hospital", "doctor", "medicine")):
+            return "Healthcare"
+
+        if (
+            any(token in text_lower for token in ("store", "mart", "supermarket", "market"))
+            and any(token in text_lower for token in ("qty", "mrp", "rate", "amt", "pls pay", "bill no"))
+        ):
+            return "Shopping"
+
+        return current_category or "Other"
 
     def _normalize_category(self, category: str | None) -> str:
         if not category:
@@ -1171,38 +1385,25 @@ receipt_processor = ReceiptProcessor()
 @app.route("/api/process-bill", methods=["POST"])
 def process_bill():
     try:
-        if "file" in request.files:
-            file = request.files["file"]
-            if not file.filename:
-                return jsonify({"error": "No file selected"}), 400
+        uploaded_file = request.files.get("file") or request.files.get("image") or request.files.get("pdf")
+        if uploaded_file is None:
+            return jsonify({"error": "No receipt file was provided"}), 400
 
-            suffix = Path(file.filename).suffix.lower()
-            if suffix == ".pdf" or file.mimetype == "application/pdf":
-                result = receipt_processor.process_pdf_upload(file)
-                return jsonify(result)
+        if not uploaded_file.filename:
+            return jsonify({"error": "No receipt file selected"}), 400
 
-            result = receipt_processor.process_image_upload(file)
-            result["file_type"] = "image"
-            result["filename"] = file.filename
+        filename = uploaded_file.filename.lower()
+        content_type = str(uploaded_file.content_type or "").lower()
+        is_pdf = filename.endswith(".pdf") or "pdf" in content_type
+
+        if is_pdf:
+            result = receipt_processor.process_pdf_upload(uploaded_file)
             return jsonify(result)
 
-        if "pdf" in request.files:
-            file = request.files["pdf"]
-            if not file.filename:
-                return jsonify({"error": "No PDF file selected"}), 400
-            result = receipt_processor.process_pdf_upload(file)
-            return jsonify(result)
-
-        if "image" in request.files:
-            file = request.files["image"]
-            if not file.filename:
-                return jsonify({"error": "No image file selected"}), 400
-            result = receipt_processor.process_image_upload(file)
-            result["file_type"] = "image"
-            result["filename"] = file.filename
-            return jsonify(result)
-
-        return jsonify({"error": "No image or PDF file provided"}), 400
+        result = receipt_processor.process_image_upload(uploaded_file)
+        result["file_type"] = "image"
+        result["filename"] = uploaded_file.filename
+        return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -1231,9 +1432,6 @@ def expenses():
 
         if request.method == "POST":
             data = request.get_json(silent=True) or {}
-
-            if "vendor" not in data and data.get("merchant"):
-                data["vendor"] = data.get("merchant")
 
             required_fields = ["vendor", "amount", "category"]
             for field in required_fields:
@@ -1390,19 +1588,7 @@ def budget():
             return jsonify({"success": True, "monthly_budget": round(saved_budget, 2)})
 
         monthly_budget = expense_store.get_user_budget(user)
-        expenses = expense_store.list_expenses(user["id"])
-        spent = round(sum(amount_to_inr(expense.get("amount", 0), expense.get("currency")) for expense in expenses), 2)
-        remaining = round(monthly_budget - spent, 2)
-
-        return jsonify(
-            {
-                "success": True,
-                "monthly_budget": round(monthly_budget, 2),
-                "spent": spent,
-                "remaining": remaining,
-                "utilization": round((spent / monthly_budget) * 100, 2) if monthly_budget > 0 else 0,
-            }
-        )
+        return jsonify({"success": True, "monthly_budget": round(monthly_budget, 2)})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
@@ -1450,6 +1636,7 @@ def health_check():
         {
             "status": "healthy",
             "ocr_ready": receipt_processor.is_ready,
+            "ocr_initialized": receipt_processor.is_initialized,
             "ocr_error": receipt_processor.service_error,
             "ocr_backend": getattr(receipt_processor.ocr_service, "ocr_backend", None),
             "mongo_ready": expense_store.is_ready,
@@ -1461,6 +1648,7 @@ def health_check():
 
 if __name__ == "__main__":
     print("Starting SmartSpend backend on http://localhost:5000")
+    print("OCR mode: lazy initialization")
     print(f"OCR ready: {receipt_processor.is_ready}")
     if receipt_processor.service_error:
         print(f"OCR initialization error: {receipt_processor.service_error}")
