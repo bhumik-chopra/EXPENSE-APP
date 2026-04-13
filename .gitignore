@@ -38,9 +38,21 @@ backend/.env
 
 # local IDE files
 .idea/
+.vscode/
+.fleet/
 backend/.venv311/
+backend/.venv/
+backend/venv/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.coverage
+backend/htmlcov/
 backend/__pycache__/
 backend/ocr_module/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 backend/*.log
 backend/*.err.log
 backend/*.out.log
@@ -53,3 +65,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# local runtime data
+*.pid
+*.seed
